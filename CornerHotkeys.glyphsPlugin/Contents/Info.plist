@@ -13,9 +13,9 @@
 	<key>CFBundleName</key>
 	<string>Corner Hotkeys</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.2.1</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>3</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright 2026 Ruz Valiakhmetov</string>
 	<key>NSPrincipalClass</key>
@@ -38,6 +38,6 @@
 		<string>/Library/Frameworks/Python.framework/Versions/3.10/Python</string>
 	</array>
 	<key>productReleaseNotes</key>
-	<string>Initial version. Keys 1 and 2 add or replace two configured corner components; Q mirrors selected corners horizontally. Includes an enable/disable menu item and component settings.</string>
+	<string>Prevents 1–5 and Q from being intercepted while typing in text fields, including controls in the right-hand palette. Shortcuts remain active on the glyph editing canvas.</string>
 </dict>
 </plist>

@@ -4,7 +4,7 @@ from __future__ import division, print_function, unicode_literals
 import traceback
 
 import objc
-from AppKit import NSApplication, NSEvent, NSMenuItem
+from AppKit import NSApplication, NSEvent, NSMenuItem, NSTextField, NSTextView
 from GlyphsApp import (
     CORNER,
     GLYPH_MENU,
@@ -48,10 +48,9 @@ except Exception:
 
 
 class CornerHotkeys(GeneralPlugin):
-    """Fast, temporary keyboard workflow for two corner components.
+    """Fast, temporary keyboard workflow for five corner components.
 
-    Physical key 1: add/replace Corner 1
-    Physical key 2: add/replace Corner 2
+    Physical keys 1–5: add or replace the corresponding configured corner
     Physical key Q: mirror selected/attached corner horizontally
 
     The plugin deliberately consumes a key event only when it can perform a
@@ -60,14 +59,24 @@ class CornerHotkeys(GeneralPlugin):
     """
 
     enabledDefaultsKey = "com.ruz.CornerHotkeys.enabled"
-    corner1DefaultsKey = "com.ruz.CornerHotkeys.corner1Name"
-    corner2DefaultsKey = "com.ruz.CornerHotkeys.corner2Name"
+    cornerDefaultsKeys = {
+        1: "com.ruz.CornerHotkeys.corner1Name",
+        2: "com.ruz.CornerHotkeys.corner2Name",
+        3: "com.ruz.CornerHotkeys.corner3Name",
+        4: "com.ruz.CornerHotkeys.corner4Name",
+        5: "com.ruz.CornerHotkeys.corner5Name",
+    }
 
     # macOS virtual key codes. These follow the physical key positions and
     # therefore keep working when the current input source is Russian, Swedish,
     # or another non-Latin layout.
-    keyCode1 = 18
-    keyCode2 = 19
+    cornerKeyCodes = {
+        18: 1,
+        19: 2,
+        20: 3,
+        21: 4,
+        23: 5,
+    }
     keyCodeQ = 12
 
     @objc.python_method
@@ -135,7 +144,7 @@ class CornerHotkeys(GeneralPlugin):
             self._separatorMenuItem = NSMenuItem.separatorItem()
 
             self._enabledMenuItem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                "Corner Hotkeys Enabled (1, 2, Q)",
+                "Corner Hotkeys Enabled (1–5, Q)",
                 self.toggleCornerHotkeys_,
                 "",
             )
@@ -210,37 +219,50 @@ class CornerHotkeys(GeneralPlugin):
 
         if self._settingsWindow is None:
             self._settingsWindow = FloatingWindow(
-                (390, 174),
+                (390, 286),
                 "Corner Hotkeys",
                 autosaveName="com.ruz.CornerHotkeys.settingsWindow",
             )
             self._settingsWindow.intro = TextBox(
                 (16, 14, -16, 34),
-                "Choose the two _corner.* glyphs assigned to the physical 1 and 2 keys.",
+                "Choose the _corner.* glyph assigned to each physical number key.",
             )
-            self._settingsWindow.label1 = TextBox((16, 62, 70, 20), "Key 1")
-            self._settingsWindow.corner1 = PopUpButton((82, 58, -16, 25), [])
-            self._settingsWindow.label2 = TextBox((16, 99, 70, 20), "Key 2")
-            self._settingsWindow.corner2 = PopUpButton((82, 95, -16, 25), [])
+
+            firstY = 58
+            rowHeight = 37
+            for slot in range(1, 6):
+                y = firstY + (slot - 1) * rowHeight
+                setattr(
+                    self._settingsWindow,
+                    "label%d" % slot,
+                    TextBox((16, y + 4, 70, 20), "Key %d" % slot),
+                )
+                setattr(
+                    self._settingsWindow,
+                    "corner%d" % slot,
+                    PopUpButton((82, y, -16, 25), []),
+                )
+
             self._settingsWindow.save = Button(
                 (-94, -40, 78, 24), "Save", callback=self._saveSettings
             )
             self._settingsWindow.status = TextBox((16, -36, -110, 18), "", sizeStyle="small")
 
         displayNames = names if names else ["No _corner.* glyphs found"]
-        self._settingsWindow.corner1.setItems(displayNames)
-        self._settingsWindow.corner2.setItems(displayNames)
+        for slot in range(1, 6):
+            popup = getattr(self._settingsWindow, "corner%d" % slot)
+            popup.setItems(displayNames)
 
         if names:
-            name1 = self._resolvedCornerName(1, font)
-            name2 = self._resolvedCornerName(2, font)
-            self._settingsWindow.corner1.set(self._indexForName(name1, names, 0))
-            self._settingsWindow.corner2.set(self._indexForName(name2, names, 1))
+            for slot in range(1, 6):
+                name = self._resolvedCornerName(slot, font)
+                popup = getattr(self._settingsWindow, "corner%d" % slot)
+                popup.set(self._indexForName(name, names, slot - 1))
             self._settingsWindow.save.enable(True)
             self._settingsWindow.status.set("Q mirrors the selected corner horizontally.")
         else:
-            self._settingsWindow.corner1.set(0)
-            self._settingsWindow.corner2.set(0)
+            for slot in range(1, 6):
+                getattr(self._settingsWindow, "corner%d" % slot).set(0)
             self._settingsWindow.save.enable(False)
             self._settingsWindow.status.set("Open a font containing _corner.* glyphs.")
 
@@ -267,11 +289,14 @@ class CornerHotkeys(GeneralPlugin):
         if not names:
             return
         try:
-            index1 = int(self._settingsWindow.corner1.get())
-            index2 = int(self._settingsWindow.corner2.get())
-            Glyphs.defaults[self.corner1DefaultsKey] = names[index1]
-            Glyphs.defaults[self.corner2DefaultsKey] = names[index2]
-            self._settingsWindow.status.set("Saved: 1 → %s, 2 → %s" % (names[index1], names[index2]))
+            saved = []
+            for slot in range(1, 6):
+                popup = getattr(self._settingsWindow, "corner%d" % slot)
+                index = int(popup.get())
+                name = names[index]
+                Glyphs.defaults[self.cornerDefaultsKeys[slot]] = name
+                saved.append("%d → %s" % (slot, name))
+            self._settingsWindow.status.set("Saved: " + ", ".join(saved))
             self._settingsWindow.close()
         except Exception:
             print("Corner Hotkeys: could not save settings")
@@ -338,15 +363,15 @@ class CornerHotkeys(GeneralPlugin):
             font = Glyphs.font
             if not self._isActiveEditWindow(font):
                 return event
+            if self._textInputHasFocus():
+                return event
 
             layer = self._currentLayer(font)
             if layer is None:
                 return event
 
-            if action == "corner1":
-                performed = self._applyCornerSlot(layer, font, 1)
-            elif action == "corner2":
-                performed = self._applyCornerSlot(layer, font, 2)
+            if isinstance(action, int):
+                performed = self._applyCornerSlot(layer, font, action)
             else:
                 performed = self._mirrorSelectedCorners(layer)
 
@@ -384,10 +409,8 @@ class CornerHotkeys(GeneralPlugin):
 
         shiftDown = bool(flags & int(NSEventModifierFlagShift))
 
-        if keyCode == self.keyCode1 and not shiftDown:
-            return "corner1"
-        if keyCode == self.keyCode2 and not shiftDown:
-            return "corner2"
+        if not shiftDown and keyCode in self.cornerKeyCodes:
+            return self.cornerKeyCodes[keyCode]
         if keyCode == self.keyCodeQ:
             return "mirror"
 
@@ -396,10 +419,8 @@ class CornerHotkeys(GeneralPlugin):
             chars = str(event.charactersIgnoringModifiers() or "").lower()
         except Exception:
             chars = ""
-        if chars == "1" and not shiftDown:
-            return "corner1"
-        if chars == "2" and not shiftDown:
-            return "corner2"
+        if not shiftDown and chars in ("1", "2", "3", "4", "5"):
+            return int(chars)
         if chars == "q":
             return "mirror"
         return None
@@ -428,6 +449,49 @@ class CornerHotkeys(GeneralPlugin):
             # below still keep the monitor conservative.
             pass
         return True
+
+    @objc.python_method
+    def _textInputHasFocus(self):
+        """Return True while a text-editing control owns keyboard focus.
+
+        Glyphs keeps the glyph document window active while the user edits
+        fields in the right-hand palette. A key-window check alone therefore
+        cannot distinguish canvas editing from typing in those controls. The
+        active field editor is an NSTextView, so number keys and Q must pass
+        through untouched whenever it is first responder.
+        """
+        try:
+            keyWindow = NSApplication.sharedApplication().keyWindow()
+            if keyWindow is None:
+                return False
+            responder = keyWindow.firstResponder()
+            if responder is None:
+                return False
+
+            for textClass in (NSTextView, NSTextField):
+                try:
+                    if responder.isKindOfClass_(textClass):
+                        return True
+                except Exception:
+                    try:
+                        if isinstance(responder, textClass):
+                            return True
+                    except Exception:
+                        pass
+
+            # A field editor is normally an NSTextView, but retain this
+            # selector-based fallback for older AppKit/PyObjC combinations.
+            try:
+                value = responder.isFieldEditor()
+                if bool(value):
+                    return True
+            except Exception:
+                pass
+        except Exception:
+            # Failing closed here would disable the plugin on unusual builds;
+            # instead leave the remaining conservative selection checks active.
+            pass
+        return False
 
     @objc.python_method
     def _currentLayer(self, font):
@@ -678,19 +742,20 @@ class CornerHotkeys(GeneralPlugin):
         if not names:
             return None
 
-        key = self.corner1DefaultsKey if int(slot) == 1 else self.corner2DefaultsKey
+        slot = int(slot)
+        key = self.cornerDefaultsKeys.get(slot)
         configured = None
         try:
-            configured = Glyphs.defaults[key]
+            configured = Glyphs.defaults[key] if key else None
         except Exception:
             pass
         if configured in names:
             return configured
 
-        # Zero-configuration behaviour for the intended temporary workflow:
-        # the first two _corner.* glyphs in font order map to 1 and 2.
-        index = 0 if int(slot) == 1 else 1
-        if index < len(names):
+        # Zero-configuration behaviour: the first five _corner.* glyphs in
+        # font order map to keys 1–5. If fewer exist, the first one is used.
+        index = slot - 1
+        if 0 <= index < len(names):
             return names[index]
         return names[0]
 
