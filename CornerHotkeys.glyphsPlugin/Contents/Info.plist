@@ -13,9 +13,9 @@
 	<key>CFBundleName</key>
 	<string>Corner Hotkeys</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.1</string>
+	<string>0.3.1</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>4</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright 2026 Ruz Valiakhmetov</string>
 	<key>NSPrincipalClass</key>
@@ -38,6 +38,6 @@
 		<string>/Library/Frameworks/Python.framework/Versions/3.10/Python</string>
 	</array>
 	<key>productReleaseNotes</key>
-	<string>Prevents 1–5 and Q from being intercepted while typing in text fields, including controls in the right-hand palette. Shortcuts remain active on the glyph editing canvas.</string>
+	<string>Adds a configurable shortcut for cycling corner-component alignment modes. The default is the Swedish § key to the left of 1.</string>
 </dict>
 </plist>

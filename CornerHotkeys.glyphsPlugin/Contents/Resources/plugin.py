@@ -14,7 +14,7 @@ from GlyphsApp import (
     Glyphs,
 )
 from GlyphsApp.plugins import GeneralPlugin
-from vanilla import Button, FloatingWindow, PopUpButton, TextBox
+from vanilla import Button, EditText, FloatingWindow, PopUpButton, TextBox
 
 try:
     from AppKit import NSControlStateValueOff, NSControlStateValueOn
@@ -48,10 +48,11 @@ except Exception:
 
 
 class CornerHotkeys(GeneralPlugin):
-    """Fast, temporary keyboard workflow for five corner components.
+    """Fast keyboard workflow for corner components.
 
     Physical keys 1–5: add or replace the corresponding configured corner
     Physical key Q: mirror selected/attached corner horizontally
+    Configurable key (default: §): cycle through corner alignment modes
 
     The plugin deliberately consumes a key event only when it can perform a
     corner action in an active Edit View. Otherwise Glyphs receives the event
@@ -59,6 +60,7 @@ class CornerHotkeys(GeneralPlugin):
     """
 
     enabledDefaultsKey = "com.ruz.CornerHotkeys.enabled"
+    alignmentShortcutDefaultsKey = "com.ruz.CornerHotkeys.alignmentShortcut"
     cornerDefaultsKeys = {
         1: "com.ruz.CornerHotkeys.corner1Name",
         2: "com.ruz.CornerHotkeys.corner2Name",
@@ -78,6 +80,11 @@ class CornerHotkeys(GeneralPlugin):
         23: 5,
     }
     keyCodeQ = 12
+    keyCodeISOSection = 10
+
+    # The three alignment modes shown for corner components in Glyphs 3:
+    # left, centre, right.
+    alignmentModes = (0, 2, 1)
 
     @objc.python_method
     def settings(self):
@@ -117,8 +124,19 @@ class CornerHotkeys(GeneralPlugin):
         try:
             if Glyphs.defaults[self.enabledDefaultsKey] is None:
                 Glyphs.defaults[self.enabledDefaultsKey] = True
+            if Glyphs.defaults[self.alignmentShortcutDefaultsKey] is None:
+                Glyphs.defaults[self.alignmentShortcutDefaultsKey] = "§"
         except Exception:
             pass
+
+    @objc.python_method
+    def _alignmentShortcut(self):
+        try:
+            value = Glyphs.defaults[self.alignmentShortcutDefaultsKey]
+        except Exception:
+            value = None
+        value = str(value or "").strip()
+        return value[0] if value else "§"
 
     @objc.python_method
     def _isEnabled(self):
@@ -144,7 +162,7 @@ class CornerHotkeys(GeneralPlugin):
             self._separatorMenuItem = NSMenuItem.separatorItem()
 
             self._enabledMenuItem = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-                "Corner Hotkeys Enabled (1–5, Q)",
+                "Corner Hotkeys Enabled",
                 self.toggleCornerHotkeys_,
                 "",
             )
@@ -191,6 +209,9 @@ class CornerHotkeys(GeneralPlugin):
             item.setState_(
                 NSControlStateValueOn if self._isEnabled() else NSControlStateValueOff
             )
+            item.setTitle_(
+                "Corner Hotkeys Enabled (1–5, Q, %s)" % self._alignmentShortcut()
+            )
         except Exception:
             pass
 
@@ -219,13 +240,13 @@ class CornerHotkeys(GeneralPlugin):
 
         if self._settingsWindow is None:
             self._settingsWindow = FloatingWindow(
-                (390, 286),
+                (390, 345),
                 "Corner Hotkeys",
                 autosaveName="com.ruz.CornerHotkeys.settingsWindow",
             )
             self._settingsWindow.intro = TextBox(
                 (16, 14, -16, 34),
-                "Choose the _corner.* glyph assigned to each physical number key.",
+                "Choose the _corner.* glyph assigned to each number key.",
             )
 
             firstY = 58
@@ -243,6 +264,16 @@ class CornerHotkeys(GeneralPlugin):
                     PopUpButton((82, y, -16, 25), []),
                 )
 
+            self._settingsWindow.alignmentLabel = TextBox(
+                (16, 253, 130, 20), "Alignment mode key"
+            )
+            self._settingsWindow.alignmentShortcut = EditText(
+                (150, 248, 52, 24), "§"
+            )
+            self._settingsWindow.alignmentHint = TextBox(
+                (212, 253, -16, 18), "one character", sizeStyle="small"
+            )
+
             self._settingsWindow.save = Button(
                 (-94, -40, 78, 24), "Save", callback=self._saveSettings
             )
@@ -253,18 +284,24 @@ class CornerHotkeys(GeneralPlugin):
             popup = getattr(self._settingsWindow, "corner%d" % slot)
             popup.setItems(displayNames)
 
+        self._settingsWindow.alignmentShortcut.set(self._alignmentShortcut())
+
         if names:
             for slot in range(1, 6):
                 name = self._resolvedCornerName(slot, font)
                 popup = getattr(self._settingsWindow, "corner%d" % slot)
                 popup.set(self._indexForName(name, names, slot - 1))
             self._settingsWindow.save.enable(True)
-            self._settingsWindow.status.set("Q mirrors the selected corner horizontally.")
+            self._settingsWindow.status.set(
+                "Q mirrors; %s cycles alignment modes." % self._alignmentShortcut()
+            )
         else:
             for slot in range(1, 6):
                 getattr(self._settingsWindow, "corner%d" % slot).set(0)
-            self._settingsWindow.save.enable(False)
-            self._settingsWindow.status.set("Open a font containing _corner.* glyphs.")
+            self._settingsWindow.save.enable(True)
+            self._settingsWindow.status.set(
+                "No _corner.* glyphs found; the shortcut can still be saved."
+            )
 
         self._settingsWindow.open()
         try:
@@ -286,22 +323,39 @@ class CornerHotkeys(GeneralPlugin):
     @objc.python_method
     def _saveSettings(self, sender):
         names = list(getattr(self, "_settingsCornerNames", []) or [])
-        if not names:
-            return
         try:
             saved = []
-            for slot in range(1, 6):
-                popup = getattr(self._settingsWindow, "corner%d" % slot)
-                index = int(popup.get())
-                name = names[index]
-                Glyphs.defaults[self.cornerDefaultsKeys[slot]] = name
-                saved.append("%d → %s" % (slot, name))
+            if names:
+                for slot in range(1, 6):
+                    popup = getattr(self._settingsWindow, "corner%d" % slot)
+                    index = int(popup.get())
+                    name = names[index]
+                    Glyphs.defaults[self.cornerDefaultsKeys[slot]] = name
+                    saved.append("%d → %s" % (slot, name))
+
+            shortcut = self._normalisedShortcut(
+                self._settingsWindow.alignmentShortcut.get()
+            )
+            if shortcut.casefold() in ("1", "2", "3", "4", "5", "q"):
+                self._settingsWindow.status.set(
+                    "Choose a key other than 1–5 or Q."
+                )
+                return
+            Glyphs.defaults[self.alignmentShortcutDefaultsKey] = shortcut
+            self._updateMenuState()
+
+            saved.append("alignment → %s" % shortcut)
             self._settingsWindow.status.set("Saved: " + ", ".join(saved))
             self._settingsWindow.close()
         except Exception:
             print("Corner Hotkeys: could not save settings")
             print(traceback.format_exc())
             Glyphs.showMacroWindow()
+
+    @objc.python_method
+    def _normalisedShortcut(self, value):
+        value = str(value or "").strip()
+        return value[0] if value else "§"
 
     @objc.python_method
     def _indexForName(self, name, names, fallbackIndex):
@@ -372,6 +426,8 @@ class CornerHotkeys(GeneralPlugin):
 
             if isinstance(action, int):
                 performed = self._applyCornerSlot(layer, font, action)
+            elif action == "alignment":
+                performed = self._cycleSelectedCornerAlignment(layer)
             else:
                 performed = self._mirrorSelectedCorners(layer)
 
@@ -414,16 +470,52 @@ class CornerHotkeys(GeneralPlugin):
         if keyCode == self.keyCodeQ:
             return "mirror"
 
+        alignmentShortcut = self._alignmentShortcut()
+        # The Swedish § key is the ISO key immediately to the left of 1.
+        # Matching its physical key code keeps the default useful even if the
+        # input source changes temporarily.
+        if (
+            alignmentShortcut == "§"
+            and not shiftDown
+            and keyCode == self.keyCodeISOSection
+        ):
+            return "alignment"
+
         # Fallback for unusual keyboards / PyObjC builds.
         try:
-            chars = str(event.charactersIgnoringModifiers() or "").lower()
+            chars = str(event.charactersIgnoringModifiers() or "")
         except Exception:
             chars = ""
-        if not shiftDown and chars in ("1", "2", "3", "4", "5"):
-            return int(chars)
-        if chars == "q":
+        try:
+            actualChars = str(event.characters() or "")
+        except Exception:
+            actualChars = chars
+
+        lowerChars = chars.casefold()
+        if not shiftDown and lowerChars in ("1", "2", "3", "4", "5"):
+            return int(lowerChars)
+        if lowerChars == "q":
             return "mirror"
+        if self._shortcutMatchesCharacters(
+            alignmentShortcut, actualChars, chars
+        ):
+            return "alignment"
         return None
+
+    @objc.python_method
+    def _shortcutMatchesCharacters(self, shortcut, actualChars, unmodifiedChars):
+        shortcut = self._normalisedShortcut(shortcut)
+        candidates = [str(actualChars or ""), str(unmodifiedChars or "")]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            if candidate == shortcut:
+                return True
+            # Letter shortcuts should remain convenient with Caps Lock or
+            # Shift, while punctuation remains an exact match.
+            if shortcut.isalpha() and candidate.casefold() == shortcut.casefold():
+                return True
+        return False
 
     @objc.python_method
     def _isActiveEditWindow(self, font):
@@ -586,12 +678,7 @@ class CornerHotkeys(GeneralPlugin):
 
     @objc.python_method
     def _mirrorSelectedCorners(self, layer):
-        selectedHints, selectedNodes = self._selectedCornersAndNodes(layer)
-
-        corners = list(selectedHints)
-        for node in selectedNodes:
-            corners.extend(self._cornerHintsAttachedToNode(layer, node))
-        corners = self._dedupeObjects(corners)
+        corners = self._selectedOrAttachedCorners(layer)
 
         if not corners:
             return False
@@ -633,6 +720,70 @@ class CornerHotkeys(GeneralPlugin):
                     glyph.endUndo()
                 except Exception:
                     pass
+
+    @objc.python_method
+    def _cycleSelectedCornerAlignment(self, layer):
+        corners = self._selectedOrAttachedCorners(layer)
+        if not corners:
+            return False
+
+        glyph = getattr(layer, "parent", None)
+        if glyph is not None:
+            try:
+                glyph.beginUndo()
+            except Exception:
+                pass
+
+        changed = False
+        try:
+            for hint in corners:
+                try:
+                    options = hint.options
+                    if callable(options):
+                        options = options()
+                    currentMode = int(options or 0)
+
+                    try:
+                        index = self.alignmentModes.index(currentMode)
+                        nextMode = self.alignmentModes[
+                            (index + 1) % len(self.alignmentModes)
+                        ]
+                    except ValueError:
+                        nextMode = self.alignmentModes[0]
+
+                    # GSHint.options stores the corner alignment directly:
+                    # 0 = left, 2 = centre, 1 = right. Calling the Objective-C
+                    # setter first proved more reliable for immediate UI updates
+                    # in Glyphs 3 than mutating guessed option bit flags.
+                    try:
+                        hint.setOptions_(int(nextMode))
+                    except Exception:
+                        hint.options = int(nextMode)
+                    changed = True
+                except Exception:
+                    print(
+                        "Corner Hotkeys: could not change alignment for corner %r"
+                        % hint
+                    )
+                    print(traceback.format_exc())
+
+            if changed:
+                self._redraw()
+            return changed
+        finally:
+            if glyph is not None:
+                try:
+                    glyph.endUndo()
+                except Exception:
+                    pass
+
+    @objc.python_method
+    def _selectedOrAttachedCorners(self, layer):
+        selectedHints, selectedNodes = self._selectedCornersAndNodes(layer)
+        corners = list(selectedHints)
+        for node in selectedNodes:
+            corners.extend(self._cornerHintsAttachedToNode(layer, node))
+        return self._dedupeObjects(corners)
 
     @objc.python_method
     def _selectedCornersAndNodes(self, layer):
