@@ -13,9 +13,9 @@
 	<key>CFBundleName</key>
 	<string>Corner Hotkeys G4</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.2</string>
+	<string>0.4.0</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright 2026 Ruz Valiakhmetov</string>
 	<key>NSPrincipalClass</key>
@@ -40,6 +40,6 @@
 		<string>/Library/Frameworks/Python.framework/Versions/3.12/Python</string>
 	</array>
 	<key>productReleaseNotes</key>
-	<string>Fixes manual installation in Glyphs 4 by using a bundle filename without spaces.</string>
+	<string>Adds optional coloured corner-component highlights for keys 1–5, with 9 px auras, and fixes reopening the Settings window.</string>
 </dict>
 </plist>

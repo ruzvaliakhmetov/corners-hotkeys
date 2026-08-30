@@ -4,9 +4,10 @@ from __future__ import division, print_function, unicode_literals
 import traceback
 
 import objc
-from AppKit import NSApplication, NSEvent, NSMenuItem, NSTextField, NSTextView
+from AppKit import NSApplication, NSColor, NSEvent, NSMenuItem, NSTextField, NSTextView
 from GlyphsApp import (
     CORNER,
+    DRAWFOREGROUND,
     GLYPH_MENU,
     GSHandle,
     GSHint,
@@ -14,7 +15,7 @@ from GlyphsApp import (
     Glyphs,
 )
 from GlyphsApp.plugins import GeneralPlugin
-from vanilla import Button, EditText, FloatingWindow, PopUpButton, TextBox
+from vanilla import Button, CheckBox, EditText, FloatingWindow, PopUpButton, TextBox
 
 try:
     from AppKit import NSControlStateValueOff, NSControlStateValueOn
@@ -61,6 +62,7 @@ class CornerHotkeysG4(GeneralPlugin):
 
     enabledDefaultsKey = "com.ruz.CornerHotkeysG4.enabled"
     alignmentShortcutDefaultsKey = "com.ruz.CornerHotkeysG4.alignmentShortcut"
+    coloredHighlightsDefaultsKey = "com.ruz.CornerHotkeysG4.coloredHighlights"
     cornerDefaultsKeys = {
         1: "com.ruz.CornerHotkeysG4.corner1Name",
         2: "com.ruz.CornerHotkeysG4.corner2Name",
@@ -86,11 +88,23 @@ class CornerHotkeysG4(GeneralPlugin):
     # left, centre, right.
     alignmentModes = (0, 2, 1)
 
+    # Corner highlight colours for keys 1–5. The first colour matches
+    # Glyphs’ standard corner-component blue; the others make each hotkey
+    # assignment immediately distinguishable in Edit View.
+    cornerColors = {
+        1: (0xBC / 255.0, 0xDD / 255.0, 0xF0 / 255.0),
+        2: (0xE1 / 255.0, 0xA0 / 255.0, 0xA0 / 255.0),
+        3: (0x83 / 255.0, 0xEB / 255.0, 0x7B / 255.0),
+        4: (0xD5 / 255.0, 0x7B / 255.0, 0xEB / 255.0),
+        5: (0xEB / 255.0, 0xD2 / 255.0, 0x7B / 255.0),
+    }
+
     @objc.python_method
     def settings(self):
         self.name = Glyphs.localize({"en": "Corner Hotkeys G4"})
         self._eventMonitor = None
         self._eventHandler = None
+        self._drawCallback = None
         self._enabledMenuItem = None
         self._settingsMenuItem = None
         self._separatorMenuItem = None
@@ -102,10 +116,12 @@ class CornerHotkeysG4(GeneralPlugin):
         self._ensureDefaults()
         self._addMenuItems()
         self._installEventMonitor()
+        self._installDrawCallback()
 
     @objc.python_method
     def stop(self):
         self._removeEventMonitor()
+        self._removeDrawCallback()
         self._removeMenuItems()
         self._closeSettingsWindow()
 
@@ -126,6 +142,8 @@ class CornerHotkeysG4(GeneralPlugin):
                 Glyphs.defaults[self.enabledDefaultsKey] = True
             if Glyphs.defaults[self.alignmentShortcutDefaultsKey] is None:
                 Glyphs.defaults[self.alignmentShortcutDefaultsKey] = "§"
+            if Glyphs.defaults[self.coloredHighlightsDefaultsKey] is None:
+                Glyphs.defaults[self.coloredHighlightsDefaultsKey] = False
         except Exception:
             pass
 
@@ -153,6 +171,14 @@ class CornerHotkeysG4(GeneralPlugin):
         except Exception:
             pass
         self._updateMenuState()
+
+    @objc.python_method
+    def _coloredHighlightsEnabled(self):
+        try:
+            value = Glyphs.defaults[self.coloredHighlightsDefaultsKey]
+            return False if value is None else bool(value)
+        except Exception:
+            return False
 
     @objc.python_method
     def _addMenuItems(self):
@@ -238,9 +264,26 @@ class CornerHotkeysG4(GeneralPlugin):
         names = self._availableCornerNames(font)
         self._settingsCornerNames = names
 
+        # A vanilla Window cannot be reopened after it has been closed.
+        # If Settings is already visible, just bring it forward; otherwise
+        # discard the stale wrapper and create a fresh window below.
+        window = getattr(self, "_settingsWindow", None)
+        if window is not None:
+            try:
+                nsWindow = window.getNSWindow()
+                if nsWindow is not None and nsWindow.isVisible():
+                    try:
+                        window.makeKey()
+                    except Exception:
+                        pass
+                    return
+            except Exception:
+                pass
+            self._settingsWindow = None
+
         if self._settingsWindow is None:
             self._settingsWindow = FloatingWindow(
-                (390, 345),
+                (390, 380),
                 "Corner Hotkeys G4",
                 autosaveName="com.ruz.CornerHotkeysG4.settingsWindow",
             )
@@ -274,6 +317,12 @@ class CornerHotkeysG4(GeneralPlugin):
                 (212, 253, -16, 18), "one character", sizeStyle="small"
             )
 
+            self._settingsWindow.coloredHighlights = CheckBox(
+                (16, 292, -16, 20),
+                "Colored corner highlights",
+                value=False,
+            )
+
             self._settingsWindow.save = Button(
                 (-94, -40, 78, 24), "Save", callback=self._saveSettings
             )
@@ -285,6 +334,9 @@ class CornerHotkeysG4(GeneralPlugin):
             popup.setItems(displayNames)
 
         self._settingsWindow.alignmentShortcut.set(self._alignmentShortcut())
+        self._settingsWindow.coloredHighlights.set(
+            self._coloredHighlightsEnabled()
+        )
 
         if names:
             for slot in range(1, 6):
@@ -342,11 +394,20 @@ class CornerHotkeysG4(GeneralPlugin):
                 )
                 return
             Glyphs.defaults[self.alignmentShortcutDefaultsKey] = shortcut
+            Glyphs.defaults[self.coloredHighlightsDefaultsKey] = bool(
+                self._settingsWindow.coloredHighlights.get()
+            )
             self._updateMenuState()
 
             saved.append("alignment → %s" % shortcut)
+            saved.append(
+                "colors → %s"
+                % ("on" if self._coloredHighlightsEnabled() else "off")
+            )
             self._settingsWindow.status.set("Saved: " + ", ".join(saved))
-            self._settingsWindow.close()
+            window = self._settingsWindow
+            self._settingsWindow = None
+            window.close()
         except Exception:
             print("Corner Hotkeys G4: could not save settings")
             print(traceback.format_exc())
@@ -365,6 +426,157 @@ class CornerHotkeysG4(GeneralPlugin):
             if not names:
                 return 0
             return min(max(int(fallbackIndex), 0), len(names) - 1)
+
+    # ---------------------------------------------------------------------
+    # Coloured corner highlights
+
+    @objc.python_method
+    def _installDrawCallback(self):
+        if self._drawCallback is not None:
+            return
+        try:
+            # Keep the exact bound-method object alive so removeCallback gets
+            # the same callable later.
+            self._drawCallback = self._drawCornerHighlights
+            Glyphs.addCallback(self._drawCallback, DRAWFOREGROUND)
+        except Exception:
+            print("Corner Hotkeys G4: could not install drawing callback")
+            print(traceback.format_exc())
+            self._drawCallback = None
+
+    @objc.python_method
+    def _removeDrawCallback(self):
+        callback = getattr(self, "_drawCallback", None)
+        if callback is not None:
+            try:
+                Glyphs.removeCallback(callback, DRAWFOREGROUND)
+            except Exception:
+                pass
+        self._drawCallback = None
+
+    @objc.python_method
+    def _drawCornerHighlights(self, layer, info):
+        """Overlay assigned corner components with their hotkey colour.
+
+        Glyphs computes the fully transformed corner shape while drawing and
+        exposes it as hint.tempData["cornerHighlightPath"]. Reusing that path
+        keeps stretching, mirroring and alignment identical to Glyphs’ own
+        corner rendering.
+        """
+        try:
+            if (
+                not self._isEnabled()
+                or not self._coloredHighlightsEnabled()
+                or layer is None
+            ):
+                return
+
+            font = getattr(layer, "font", None)
+            if callable(font):
+                font = font()
+            if font is None:
+                glyph = getattr(layer, "parent", None)
+                font = getattr(glyph, "parent", None) if glyph is not None else None
+            if font is None:
+                font = Glyphs.font
+            if font is None:
+                return
+
+            # Resolve current assignments every draw so Settings changes are
+            # reflected immediately. If the same corner is assigned twice, the
+            # lower-numbered key wins because the hint itself stores only name.
+            slotForName = {}
+            for slot in range(1, 6):
+                name = self._resolvedCornerName(slot, font)
+                if name and name not in slotForName:
+                    slotForName[name] = slot
+
+            try:
+                hints = list(layer.hints or [])
+            except Exception:
+                hints = []
+            if not hints:
+                return
+
+            # Accessing the layer path asks Glyphs to calculate corner highlight
+            # paths when they are not cached yet.
+            try:
+                _ = layer.bezierPath
+            except Exception:
+                pass
+
+            for hint in hints:
+                if not self._isCornerHint(hint):
+                    continue
+                try:
+                    name = str(hint.name or "")
+                except Exception:
+                    continue
+                slot = slotForName.get(name)
+                if slot is None:
+                    continue
+
+                try:
+                    tempData = hint.tempData
+                    path = tempData.get("cornerHighlightPath") if tempData else None
+                except Exception:
+                    path = None
+                if path is None:
+                    continue
+
+                rgb = self.cornerColors.get(slot)
+                if rgb is None:
+                    continue
+                try:
+                    lineColor = NSColor.colorWithSRGBRed_green_blue_alpha_(
+                        rgb[0], rgb[1], rgb[2], 1.0
+                    )
+                    auraColor = NSColor.colorWithSRGBRed_green_blue_alpha_(
+                        rgb[0], rgb[1], rgb[2], 0.62
+                    )
+                except Exception:
+                    lineColor = NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                        rgb[0], rgb[1], rgb[2], 1.0
+                    )
+                    auraColor = NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                        rgb[0], rgb[1], rgb[2], 0.62
+                    )
+
+                # Draw a 9-screen-pixel translucent aura over Glyphs' standard
+                # highlight, then the crisp 1-screen-pixel centreline.
+                try:
+                    scale = float((info or {}).get("Scale", 1.0) or 1.0)
+                except Exception:
+                    scale = 1.0
+                scale = max(scale, 0.000001)
+
+                try:
+                    auraPath = path.copy()
+                except Exception:
+                    auraPath = path
+                try:
+                    auraPath.setLineCapStyle_(1)  # NSRoundLineCapStyle
+                except Exception:
+                    pass
+                auraPath.setLineWidth_(9.0 / scale)
+                auraColor.set()
+                auraPath.stroke()
+
+                try:
+                    linePath = path.copy()
+                except Exception:
+                    linePath = path
+                try:
+                    linePath.setLineCapStyle_(1)
+                except Exception:
+                    pass
+                linePath.setLineWidth_(1.0 / scale)
+                lineColor.set()
+                linePath.stroke()
+        except Exception:
+            # Drawing callbacks must never break the Edit View.
+            print("Corner Hotkeys G4: corner highlight drawing error")
+            print(traceback.format_exc())
 
     # ---------------------------------------------------------------------
     # Event monitor
