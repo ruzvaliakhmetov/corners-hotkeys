@@ -2,19 +2,22 @@
 
 A Glyphs 4 plugin for working with corner components using keyboard shortcuts.
 
-- `1`–`5` — insert or replace configured corner components
-- `Q` — mirror the selected corner component horizontally
-- `§` by default — cycle alignment: left → centre → right
-- Optional coloured corner highlights for keys 1–5
+- **1–5** — insert or replace configured corner components
+- **Q** — mirror the selected corner horizontally
+- **§** — cycle through alignment modes
 
-Open **Glyph → Corner Hotkeys G4 Settings…** to assign components, change the alignment shortcut, and enable **Colored corner highlights**. Colouring is off by default.
+Corner assignments and the alignment shortcut can be changed in **Glyph → Corner Hotkeys G4 Settings…**. Each number-key dropdown includes **None**. New `_corner.*` glyphs are automatically assigned to the first free number key, while unused keys remain unassigned instead of repeating existing corners.
 
-Highlight colours:
+The shortcuts can be enabled or disabled from the Glyph menu.
 
-1. `#bcddf0`
-2. `#e1a0a0`
-3. `#83eb7b`
-4. `#d57beb`
-5. `#ebd27b`
+Coloured corner highlights are optional and **off by default**. Enable **Colored corner highlights** in Settings to use them.
 
-The coloured aura is 9 screen pixels wide.
+## Corner colours
+
+When **Colored corner highlights** is enabled, corner components assigned to number keys are colour-coded in Edit View, including both the centreline and the 9 px corner aura:
+
+- **1** — `#bcddf0`
+- **2** — `#e1a0a0`
+- **3** — `#83eb7b`
+- **4** — `#d57beb`
+- **5** — `#ebd27b`

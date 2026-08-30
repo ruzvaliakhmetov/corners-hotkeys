@@ -110,6 +110,7 @@ class CornerHotkeys(GeneralPlugin):
         self._separatorMenuItem = None
         self._settingsWindow = None
         self._settingsCornerNames = []
+        self._knownCornerNamesByFont = {}
 
     @objc.python_method
     def start(self):
@@ -117,6 +118,10 @@ class CornerHotkeys(GeneralPlugin):
         self._addMenuItems()
         self._installEventMonitor()
         self._installDrawCallback()
+        try:
+            self._observeCornerNames(Glyphs.font)
+        except Exception:
+            pass
 
     @objc.python_method
     def stop(self):
@@ -261,6 +266,7 @@ class CornerHotkeys(GeneralPlugin):
     @objc.python_method
     def _openSettingsWindow(self):
         font = Glyphs.font
+        self._observeCornerNames(font)
         names = self._availableCornerNames(font)
         self._settingsCornerNames = names
 
@@ -328,7 +334,7 @@ class CornerHotkeys(GeneralPlugin):
             )
             self._settingsWindow.status = TextBox((16, -36, -110, 18), "", sizeStyle="small")
 
-        displayNames = names if names else ["No _corner.* glyphs found"]
+        displayNames = ["None"] + names
         for slot in range(1, 6):
             popup = getattr(self._settingsWindow, "corner%d" % slot)
             popup.setItems(displayNames)
@@ -338,21 +344,19 @@ class CornerHotkeys(GeneralPlugin):
             self._coloredHighlightsEnabled()
         )
 
+        for slot in range(1, 6):
+            name = self._resolvedCornerName(slot, font)
+            popup = getattr(self._settingsWindow, "corner%d" % slot)
+            popup.set(self._indexForName(name, names))
+
+        self._settingsWindow.save.enable(True)
         if names:
-            for slot in range(1, 6):
-                name = self._resolvedCornerName(slot, font)
-                popup = getattr(self._settingsWindow, "corner%d" % slot)
-                popup.set(self._indexForName(name, names, slot - 1))
-            self._settingsWindow.save.enable(True)
             self._settingsWindow.status.set(
                 "Q mirrors; %s cycles alignment modes." % self._alignmentShortcut()
             )
         else:
-            for slot in range(1, 6):
-                getattr(self._settingsWindow, "corner%d" % slot).set(0)
-            self._settingsWindow.save.enable(True)
             self._settingsWindow.status.set(
-                "No _corner.* glyphs found; the shortcut can still be saved."
+                "No _corner.* glyphs found yet. New corners will use the first free key."
             )
 
         self._settingsWindow.open()
@@ -377,13 +381,19 @@ class CornerHotkeys(GeneralPlugin):
         names = list(getattr(self, "_settingsCornerNames", []) or [])
         try:
             saved = []
-            if names:
-                for slot in range(1, 6):
-                    popup = getattr(self._settingsWindow, "corner%d" % slot)
-                    index = int(popup.get())
-                    name = names[index]
-                    Glyphs.defaults[self.cornerDefaultsKeys[slot]] = name
-                    saved.append("%d → %s" % (slot, name))
+            assigned = set()
+            for slot in range(1, 6):
+                popup = getattr(self._settingsWindow, "corner%d" % slot)
+                index = int(popup.get())
+                name = names[index - 1] if index > 0 and index <= len(names) else ""
+                # Keep assignments unique. If the same corner is selected for
+                # more than one key, the lower-numbered key wins.
+                if name and name in assigned:
+                    name = ""
+                if name:
+                    assigned.add(name)
+                Glyphs.defaults[self.cornerDefaultsKeys[slot]] = name
+                saved.append("%d → %s" % (slot, name or "None"))
 
             shortcut = self._normalisedShortcut(
                 self._settingsWindow.alignmentShortcut.get()
@@ -419,13 +429,13 @@ class CornerHotkeys(GeneralPlugin):
         return value[0] if value else "§"
 
     @objc.python_method
-    def _indexForName(self, name, names, fallbackIndex):
+    def _indexForName(self, name, names):
+        if not name:
+            return 0
         try:
-            return names.index(name)
+            return names.index(name) + 1
         except Exception:
-            if not names:
-                return 0
-            return min(max(int(fallbackIndex), 0), len(names) - 1)
+            return 0
 
     # ---------------------------------------------------------------------
     # Event monitor
@@ -495,11 +505,7 @@ class CornerHotkeys(GeneralPlugin):
         corner rendering.
         """
         try:
-            if (
-                not self._isEnabled()
-                or not self._coloredHighlightsEnabled()
-                or layer is None
-            ):
+            if layer is None:
                 return
 
             font = getattr(layer, "font", None)
@@ -511,6 +517,15 @@ class CornerHotkeys(GeneralPlugin):
             if font is None:
                 font = Glyphs.font
             if font is None:
+                return
+
+            # The draw callback also acts as a lightweight observer for newly
+            # created _corner.* glyphs. This runs even when coloured highlights
+            # are disabled, because automatic hotkey assignment is independent
+            # from the visual highlight option.
+            self._observeCornerNames(font)
+
+            if not self._isEnabled() or not self._coloredHighlightsEnabled():
                 return
 
             # Resolve current assignments every draw so Settings changes are
@@ -635,6 +650,10 @@ class CornerHotkeys(GeneralPlugin):
                 return event
             if self._textInputHasFocus():
                 return event
+
+            # Detect newly created _corner.* glyphs before resolving a number
+            # key, so a fresh corner can immediately occupy the first free slot.
+            self._observeCornerNames(font)
 
             layer = self._currentLayer(font)
             if layer is None:
@@ -1087,7 +1106,7 @@ class CornerHotkeys(GeneralPlugin):
             return None
 
     # ---------------------------------------------------------------------
-    # Corner name resolution
+    # Corner name resolution and automatic assignment
 
     @objc.python_method
     def _availableCornerNames(self, font):
@@ -1104,27 +1123,131 @@ class CornerHotkeys(GeneralPlugin):
         return names
 
     @objc.python_method
+    def _rawCornerAssignment(self, slot):
+        key = self.cornerDefaultsKeys.get(int(slot))
+        if not key:
+            return None
+        try:
+            value = Glyphs.defaults[key]
+        except Exception:
+            value = None
+        if value is None:
+            return None
+        return str(value or "").strip()
+
+    @objc.python_method
+    def _initialiseCornerAssignments(self, font, names=None):
+        """Migrate the old zero-config behaviour without repeating corners.
+
+        Older versions left untouched slots absent from defaults and resolved
+        them dynamically. On first encounter, assign existing corner glyphs to
+        those uninitialised slots once, in font order, then mark the remaining
+        slots as empty. A deliberately saved None is stored as an empty string
+        and is therefore not re-filled by this migration on later launches.
+        """
+        if font is None:
+            return
+        if names is None:
+            names = self._availableCornerNames(font)
+
+        raw = {slot: self._rawCornerAssignment(slot) for slot in range(1, 6)}
+
+        # Older builds could save the same corner into several slots when the
+        # font had fewer than five _corner.* glyphs. Collapse those duplicates
+        # once so the extra keys become genuinely free.
+        assigned = set()
+        for slot in range(1, 6):
+            value = raw[slot]
+            if value and value in assigned:
+                raw[slot] = ""
+                try:
+                    Glyphs.defaults[self.cornerDefaultsKeys[slot]] = ""
+                except Exception:
+                    pass
+            elif value:
+                assigned.add(value)
+
+        if not any(value is None for value in raw.values()):
+            return
+
+        remaining = [name for name in names if name not in assigned]
+
+        for slot in range(1, 6):
+            if raw[slot] is not None:
+                continue
+            name = remaining.pop(0) if remaining else ""
+            if name:
+                assigned.add(name)
+            try:
+                Glyphs.defaults[self.cornerDefaultsKeys[slot]] = name
+            except Exception:
+                pass
+
+    @objc.python_method
+    def _autoAssignNewCornerNames(self, names, font):
+        if not names or font is None:
+            return
+
+        for name in names:
+            # Do nothing if this corner is already assigned somewhere.
+            alreadyAssigned = False
+            for slot in range(1, 6):
+                if self._rawCornerAssignment(slot) == name:
+                    alreadyAssigned = True
+                    break
+            if alreadyAssigned:
+                continue
+
+            # Empty / None means the key is currently free. Selecting None in
+            # Settings intentionally returns a key to this free pool.
+            freeSlot = None
+            for slot in range(1, 6):
+                value = self._rawCornerAssignment(slot)
+                if value is None or value == "":
+                    freeSlot = slot
+                    break
+            if freeSlot is None:
+                break
+
+            try:
+                Glyphs.defaults[self.cornerDefaultsKeys[freeSlot]] = name
+            except Exception:
+                pass
+
+    @objc.python_method
+    def _observeCornerNames(self, font):
+        """Assign only genuinely new corners after the initial snapshot."""
+        if font is None:
+            return
+
+        names = self._availableCornerNames(font)
+        self._initialiseCornerAssignments(font, names)
+
+        try:
+            marker = hash(font)
+        except Exception:
+            marker = id(font)
+        previous = self._knownCornerNamesByFont.get(marker)
+        current = set(names)
+        self._knownCornerNamesByFont[marker] = current
+
+        if previous is None:
+            return
+
+        added = [name for name in names if name not in previous]
+        if added:
+            self._autoAssignNewCornerNames(added, font)
+
+    @objc.python_method
     def _resolvedCornerName(self, slot, font):
         names = self._availableCornerNames(font)
         if not names:
             return None
 
-        slot = int(slot)
-        key = self.cornerDefaultsKeys.get(slot)
-        configured = None
-        try:
-            configured = Glyphs.defaults[key] if key else None
-        except Exception:
-            pass
-        if configured in names:
+        configured = self._rawCornerAssignment(slot)
+        if configured and configured in names:
             return configured
-
-        # Zero-configuration behaviour: the first five _corner.* glyphs in
-        # font order map to keys 1–5. If fewer exist, the first one is used.
-        index = slot - 1
-        if 0 <= index < len(names):
-            return names[index]
-        return names[0]
+        return None
 
     # ---------------------------------------------------------------------
 

@@ -6,7 +6,9 @@ A Glyphs 3 plugin for working with corner components using keyboard shortcuts.
 - **Q** — mirror the selected corner horizontally
 - **§** — cycle through alignment modes: left, centre, right, none, automatic
 
-Corner assignments and the alignment shortcut can be changed in **Glyph → Corner Hotkeys Settings…**. The shortcuts can be enabled or disabled from the Glyph menu.
+Corner assignments and the alignment shortcut can be changed in **Glyph → Corner Hotkeys Settings…**. Each number-key dropdown includes **None**. New `_corner.*` glyphs are automatically assigned to the first free number key, while unused keys remain unassigned instead of repeating existing corners.
+
+The shortcuts can be enabled or disabled from the Glyph menu.
 
 Coloured corner highlights are optional and **off by default**. Enable **Colored corner highlights** in Settings to use them.
 
