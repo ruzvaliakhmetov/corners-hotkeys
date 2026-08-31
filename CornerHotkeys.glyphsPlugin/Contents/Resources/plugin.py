@@ -1,6 +1,8 @@
 # encoding: utf-8
 from __future__ import division, print_function, unicode_literals
 
+import json
+import os
 import traceback
 
 import objc
@@ -63,6 +65,9 @@ class CornerHotkeys(GeneralPlugin):
     enabledDefaultsKey = "com.ruz.CornerHotkeys.enabled"
     alignmentShortcutDefaultsKey = "com.ruz.CornerHotkeys.alignmentShortcut"
     coloredHighlightsDefaultsKey = "com.ruz.CornerHotkeys.coloredHighlights"
+    fileProfilesDefaultsKey = "com.ruz.CornerHotkeys.fileProfilesV1"
+    fileProfilesLegacyMigratedDefaultsKey = "com.ruz.CornerHotkeys.fileProfilesLegacyMigrated"
+    fileProfilesLimit = 99
     cornerDefaultsKeys = {
         1: "com.ruz.CornerHotkeys.corner1Name",
         2: "com.ruz.CornerHotkeys.corner2Name",
@@ -110,11 +115,15 @@ class CornerHotkeys(GeneralPlugin):
         self._separatorMenuItem = None
         self._settingsWindow = None
         self._settingsCornerNames = []
+        self._settingsFont = None
         self._knownCornerNamesByFont = {}
+        self._fileProfiles = None
+        self._activeProfilePath = None
 
     @objc.python_method
     def start(self):
         self._ensureDefaults()
+        self._loadFileProfiles()
         self._addMenuItems()
         self._installEventMonitor()
         self._installDrawCallback()
@@ -268,7 +277,6 @@ class CornerHotkeys(GeneralPlugin):
         font = Glyphs.font
         self._observeCornerNames(font)
         names = self._availableCornerNames(font)
-        self._settingsCornerNames = names
 
         # A vanilla Window cannot be reopened after it has been closed.
         # If Settings is already visible, just bring it forward; otherwise
@@ -278,14 +286,25 @@ class CornerHotkeys(GeneralPlugin):
             try:
                 nsWindow = window.getNSWindow()
                 if nsWindow is not None and nsWindow.isVisible():
+                    # If Settings belongs to this same document, just bring it
+                    # forward. For a different document, rebuild the window so
+                    # its per-file assignments cannot be saved to the wrong font.
+                    if getattr(self, "_settingsFont", None) is font:
+                        try:
+                            window.makeKey()
+                        except Exception:
+                            pass
+                        return
                     try:
-                        window.makeKey()
+                        window.close()
                     except Exception:
                         pass
-                    return
             except Exception:
                 pass
             self._settingsWindow = None
+
+        self._settingsCornerNames = names
+        self._settingsFont = font
 
         if self._settingsWindow is None:
             self._settingsWindow = FloatingWindow(
@@ -352,7 +371,7 @@ class CornerHotkeys(GeneralPlugin):
         self._settingsWindow.save.enable(True)
         if names:
             self._settingsWindow.status.set(
-                "Q mirrors; %s cycles alignment modes." % self._alignmentShortcut()
+                "Assignments saved per file; %s cycles alignment." % self._alignmentShortcut()
             )
         else:
             self._settingsWindow.status.set(
@@ -375,13 +394,16 @@ class CornerHotkeys(GeneralPlugin):
         except Exception:
             pass
         self._settingsWindow = None
+        self._settingsFont = None
 
     @objc.python_method
     def _saveSettings(self, sender):
         names = list(getattr(self, "_settingsCornerNames", []) or [])
+        font = getattr(self, "_settingsFont", None) or Glyphs.font
         try:
             saved = []
             assigned = set()
+            assignments = []
             for slot in range(1, 6):
                 popup = getattr(self._settingsWindow, "corner%d" % slot)
                 index = int(popup.get())
@@ -392,8 +414,10 @@ class CornerHotkeys(GeneralPlugin):
                     name = ""
                 if name:
                     assigned.add(name)
-                Glyphs.defaults[self.cornerDefaultsKeys[slot]] = name
+                assignments.append(name)
                 saved.append("%d → %s" % (slot, name or "None"))
+
+            self._storeCornerAssignments(font, assignments)
 
             shortcut = self._normalisedShortcut(
                 self._settingsWindow.alignmentShortcut.get()
@@ -417,6 +441,7 @@ class CornerHotkeys(GeneralPlugin):
             self._settingsWindow.status.set("Saved: " + ", ".join(saved))
             window = self._settingsWindow
             self._settingsWindow = None
+            self._settingsFont = None
             window.close()
         except Exception:
             print("Corner Hotkeys: could not save settings")
@@ -1123,7 +1148,198 @@ class CornerHotkeys(GeneralPlugin):
         return names
 
     @objc.python_method
-    def _rawCornerAssignment(self, slot):
+    def _fontFilePath(self, font):
+        """Return a stable absolute path for a saved font, or None."""
+        if font is None:
+            return None
+        try:
+            value = font.filepath
+            if callable(value):
+                value = value()
+        except Exception:
+            value = None
+        if not value:
+            return None
+
+        # Glyphs may expose an NSString or an NSURL depending on build/API.
+        try:
+            pathMethod = getattr(value, "path", None)
+            if callable(pathMethod):
+                candidate = pathMethod()
+                if candidate:
+                    value = candidate
+        except Exception:
+            pass
+
+        try:
+            path = str(value).strip()
+        except Exception:
+            return None
+        if not path:
+            return None
+        if path.startswith("file://"):
+            # NSURL.path() above normally handles this. Keep a conservative
+            # fallback for stringified file URLs without pulling in Foundation.
+            path = path[7:]
+        try:
+            return os.path.normpath(os.path.abspath(os.path.expanduser(path)))
+        except Exception:
+            return path
+
+    @objc.python_method
+    def _loadFileProfiles(self):
+        if self._fileProfiles is not None:
+            return
+        self._fileProfiles = []
+        try:
+            raw = Glyphs.defaults[self.fileProfilesDefaultsKey]
+        except Exception:
+            raw = None
+        if not raw:
+            return
+        try:
+            data = json.loads(str(raw))
+            entries = data.get("files", []) if isinstance(data, dict) else []
+        except Exception:
+            return
+
+        cleaned = []
+        seenPaths = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            path = str(entry.get("path") or "").strip()
+            if not path or path in seenPaths:
+                continue
+            assignments = list(entry.get("assignments") or [])[:5]
+            assignments = [str(value or "").strip() for value in assignments]
+            while len(assignments) < 5:
+                assignments.append("")
+            known = []
+            for value in list(entry.get("known") or []):
+                name = str(value or "").strip()
+                if name and name not in known:
+                    known.append(name)
+            cleaned.append({
+                "path": path,
+                "assignments": assignments,
+                "known": known,
+            })
+            seenPaths.add(path)
+            if len(cleaned) >= self.fileProfilesLimit:
+                break
+        self._fileProfiles = cleaned
+
+    @objc.python_method
+    def _saveFileProfiles(self):
+        self._loadFileProfiles()
+        try:
+            payload = {
+                "version": 1,
+                "files": list(self._fileProfiles or [])[: self.fileProfilesLimit],
+            }
+            Glyphs.defaults[self.fileProfilesDefaultsKey] = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":")
+            )
+        except Exception:
+            print("Corner Hotkeys: could not save per-file assignments")
+            print(traceback.format_exc())
+
+    @objc.python_method
+    def _legacyAssignmentsForNames(self, names):
+        assignments = []
+        used = set()
+        matched = 0
+        for slot in range(1, 6):
+            key = self.cornerDefaultsKeys.get(slot)
+            try:
+                value = Glyphs.defaults[key]
+            except Exception:
+                value = None
+            value = str(value or "").strip() if value is not None else ""
+            if value and value in names and value not in used:
+                assignments.append(value)
+                used.add(value)
+                matched += 1
+            else:
+                assignments.append("")
+        return assignments, matched
+
+    @objc.python_method
+    def _newFileProfile(self, font, path):
+        names = self._availableCornerNames(font)
+
+        # On the first saved file seen after upgrading from v0.5, preserve the
+        # user's existing global assignments when they clearly belong to this
+        # font. After that, every new file starts with its own clean mapping.
+        try:
+            migrated = bool(Glyphs.defaults[self.fileProfilesLegacyMigratedDefaultsKey])
+        except Exception:
+            migrated = False
+
+        assignments = None
+        if not migrated:
+            legacy, matched = self._legacyAssignmentsForNames(names)
+            if matched:
+                assignments = legacy
+                try:
+                    Glyphs.defaults[self.fileProfilesLegacyMigratedDefaultsKey] = True
+                except Exception:
+                    pass
+
+        if assignments is None:
+            assignments = list(names[:5])
+            while len(assignments) < 5:
+                assignments.append("")
+
+        return {
+            "path": path,
+            "assignments": assignments[:5],
+            "known": list(names),
+        }
+
+    @objc.python_method
+    def _profileForFont(self, font, create=False, touch=True):
+        path = self._fontFilePath(font)
+        if not path:
+            return None
+        self._loadFileProfiles()
+
+        profile = None
+        index = None
+        for i, entry in enumerate(self._fileProfiles):
+            if entry.get("path") == path:
+                profile = entry
+                index = i
+                break
+
+        changed = False
+        if profile is None and create:
+            profile = self._newFileProfile(font, path)
+            self._fileProfiles.insert(0, profile)
+            changed = True
+        elif profile is not None and touch and self._activeProfilePath != path:
+            # Most-recently-used order determines which record is discarded
+            # after the 99-file limit is reached. Reorder only on file switches,
+            # not on every draw callback.
+            if index not in (None, 0):
+                self._fileProfiles.pop(index)
+                self._fileProfiles.insert(0, profile)
+                changed = True
+
+        if profile is not None and touch:
+            self._activeProfilePath = path
+
+        if len(self._fileProfiles) > self.fileProfilesLimit:
+            del self._fileProfiles[self.fileProfilesLimit :]
+            changed = True
+
+        if changed:
+            self._saveFileProfiles()
+        return profile
+
+    @objc.python_method
+    def _rawGlobalCornerAssignment(self, slot):
         key = self.cornerDefaultsKeys.get(int(slot))
         if not key:
             return None
@@ -1136,25 +1352,51 @@ class CornerHotkeys(GeneralPlugin):
         return str(value or "").strip()
 
     @objc.python_method
-    def _initialiseCornerAssignments(self, font, names=None):
-        """Migrate the old zero-config behaviour without repeating corners.
+    def _rawCornerAssignment(self, slot, font=None):
+        slot = int(slot)
+        if font is not None and self._fontFilePath(font):
+            profile = self._profileForFont(font, create=True, touch=True)
+            if profile is not None:
+                assignments = list(profile.get("assignments") or [])
+                if 1 <= slot <= len(assignments):
+                    return str(assignments[slot - 1] or "").strip()
+                return ""
+        return self._rawGlobalCornerAssignment(slot)
 
-        Older versions left untouched slots absent from defaults and resolved
-        them dynamically. On first encounter, assign existing corner glyphs to
-        those uninitialised slots once, in font order, then mark the remaining
-        slots as empty. A deliberately saved None is stored as an empty string
-        and is therefore not re-filled by this migration on later launches.
-        """
-        if font is None:
+    @objc.python_method
+    def _storeCornerAssignments(self, font, assignments):
+        values = [str(value or "").strip() for value in list(assignments or [])[:5]]
+        while len(values) < 5:
+            values.append("")
+
+        if font is not None and self._fontFilePath(font):
+            profile = self._profileForFont(font, create=True, touch=True)
+            if profile is not None:
+                profile["assignments"] = values
+                # Saving Settings is also a reliable snapshot of which corner
+                # glyphs already existed, so manually choosing None will not
+                # cause that same glyph to auto-assign after a restart.
+                profile["known"] = self._availableCornerNames(font)
+                self._saveFileProfiles()
+                return
+
+        # Unsaved fonts have no stable identity yet. Keep the old session/global
+        # behaviour until the document has a path.
+        for slot in range(1, 6):
+            try:
+                Glyphs.defaults[self.cornerDefaultsKeys[slot]] = values[slot - 1]
+            except Exception:
+                pass
+
+    @objc.python_method
+    def _initialiseCornerAssignments(self, font, names=None):
+        """Initialise the fallback mapping used only by unsaved fonts."""
+        if font is None or self._fontFilePath(font):
             return
         if names is None:
             names = self._availableCornerNames(font)
 
-        raw = {slot: self._rawCornerAssignment(slot) for slot in range(1, 6)}
-
-        # Older builds could save the same corner into several slots when the
-        # font had fewer than five _corner.* glyphs. Collapse those duplicates
-        # once so the extra keys become genuinely free.
+        raw = {slot: self._rawGlobalCornerAssignment(slot) for slot in range(1, 6)}
         assigned = set()
         for slot in range(1, 6):
             value = raw[slot]
@@ -1171,13 +1413,10 @@ class CornerHotkeys(GeneralPlugin):
             return
 
         remaining = [name for name in names if name not in assigned]
-
         for slot in range(1, 6):
             if raw[slot] is not None:
                 continue
             name = remaining.pop(0) if remaining else ""
-            if name:
-                assigned.add(name)
             try:
                 Glyphs.defaults[self.cornerDefaultsKeys[slot]] = name
             except Exception:
@@ -1186,54 +1425,102 @@ class CornerHotkeys(GeneralPlugin):
     @objc.python_method
     def _autoAssignNewCornerNames(self, names, font):
         if not names or font is None:
-            return
+            return False
 
-        for name in names:
-            # Do nothing if this corner is already assigned somewhere.
-            alreadyAssigned = False
-            for slot in range(1, 6):
-                if self._rawCornerAssignment(slot) == name:
-                    alreadyAssigned = True
+        if self._fontFilePath(font):
+            profile = self._profileForFont(font, create=True, touch=True)
+            if profile is None:
+                return False
+            assignments = list(profile.get("assignments") or [])[:5]
+            while len(assignments) < 5:
+                assignments.append("")
+            changed = False
+            for name in names:
+                if name in assignments:
+                    continue
+                try:
+                    freeIndex = assignments.index("")
+                except ValueError:
                     break
-            if alreadyAssigned:
-                continue
+                assignments[freeIndex] = name
+                changed = True
+            if changed:
+                profile["assignments"] = assignments
+            return changed
 
-            # Empty / None means the key is currently free. Selecting None in
-            # Settings intentionally returns a key to this free pool.
+        changed = False
+        for name in names:
+            if any(self._rawGlobalCornerAssignment(slot) == name for slot in range(1, 6)):
+                continue
             freeSlot = None
             for slot in range(1, 6):
-                value = self._rawCornerAssignment(slot)
+                value = self._rawGlobalCornerAssignment(slot)
                 if value is None or value == "":
                     freeSlot = slot
                     break
             if freeSlot is None:
                 break
-
             try:
                 Glyphs.defaults[self.cornerDefaultsKeys[freeSlot]] = name
+                changed = True
             except Exception:
                 pass
+        return changed
 
     @objc.python_method
     def _observeCornerNames(self, font):
-        """Assign only genuinely new corners after the initial snapshot."""
+        """Maintain per-file mappings and auto-assign genuinely new corners."""
         if font is None:
             return
 
         names = self._availableCornerNames(font)
-        self._initialiseCornerAssignments(font, names)
+        current = set(names)
 
+        if self._fontFilePath(font):
+            profile = self._profileForFont(font, create=True, touch=True)
+            if profile is None:
+                return
+
+            assignments = list(profile.get("assignments") or [])[:5]
+            while len(assignments) < 5:
+                assignments.append("")
+
+            changed = False
+            used = set()
+            # Deleted/renamed corners free their keys. Also collapse any old
+            # duplicate assignment that may have survived from an earlier build.
+            for i, name in enumerate(assignments):
+                if name and (name not in current or name in used):
+                    assignments[i] = ""
+                    changed = True
+                elif name:
+                    used.add(name)
+            profile["assignments"] = assignments
+
+            previous = set(str(value) for value in (profile.get("known") or []))
+            added = [name for name in names if name not in previous]
+            if added and self._autoAssignNewCornerNames(added, font):
+                changed = True
+
+            if list(profile.get("known") or []) != names:
+                profile["known"] = list(names)
+                changed = True
+
+            if changed:
+                self._saveFileProfiles()
+            return
+
+        # Unsaved documents cannot be keyed by path, so preserve the v0.5
+        # in-memory behaviour until they are saved.
+        self._initialiseCornerAssignments(font, names)
         try:
             marker = hash(font)
         except Exception:
             marker = id(font)
         previous = self._knownCornerNamesByFont.get(marker)
-        current = set(names)
         self._knownCornerNamesByFont[marker] = current
-
         if previous is None:
             return
-
         added = [name for name in names if name not in previous]
         if added:
             self._autoAssignNewCornerNames(added, font)
@@ -1244,7 +1531,7 @@ class CornerHotkeys(GeneralPlugin):
         if not names:
             return None
 
-        configured = self._rawCornerAssignment(slot)
+        configured = self._rawCornerAssignment(slot, font)
         if configured and configured in names:
             return configured
         return None

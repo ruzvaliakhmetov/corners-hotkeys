@@ -8,6 +8,8 @@ A Glyphs 4 plugin for working with corner components using keyboard shortcuts.
 
 Corner assignments and the alignment shortcut can be changed in **Glyph → Corner Hotkeys G4 Settings…**. Each number-key dropdown includes **None**. New `_corner.*` glyphs are automatically assigned to the first free number key, while unused keys remain unassigned instead of repeating existing corners.
 
+For saved Glyphs files, number-key assignments are remembered **per file path**. The plugin keeps profiles for the **99 most recently used files**, so switching between projects restores the corresponding corner assignments automatically. Moving or renaming a file gives it a new path and therefore a new assignment profile.
+
 The shortcuts can be enabled or disabled from the Glyph menu.
 
 Coloured corner highlights are optional and **off by default**. Enable **Colored corner highlights** in Settings to use them.
