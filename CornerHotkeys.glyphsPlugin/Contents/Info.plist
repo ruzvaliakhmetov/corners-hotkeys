@@ -13,9 +13,9 @@
 	<key>CFBundleName</key>
 	<string>Corner Hotkeys</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.6.0</string>
+	<string>0.6.1</string>
 	<key>CFBundleVersion</key>
-	<string>11</string>
+	<string>12</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright 2026 Ruz Valiakhmetov</string>
 	<key>NSPrincipalClass</key>
@@ -38,6 +38,6 @@
 		<string>/Library/Frameworks/Python.framework/Versions/3.10/Python</string>
 	</array>
 	<key>productReleaseNotes</key>
-	<string>Added per-file corner assignments for the 99 most recently used saved Glyphs files. Assignments are restored by file path, while new corner components still auto-assign to the first free key.</string>
+	<string>Fixed keyboard shortcuts being intercepted while typing in Text Preview. Corner hotkeys now run only when the Edit View canvas has keyboard focus, and pressing an unassigned number no longer opens Settings when the font has no corner components.</string>
 </dict>
 </plist>

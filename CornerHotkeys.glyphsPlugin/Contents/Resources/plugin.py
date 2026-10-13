@@ -673,6 +673,12 @@ class CornerHotkeys(GeneralPlugin):
             font = Glyphs.font
             if not self._isActiveEditWindow(font):
                 return event
+            # A local event monitor sees key presses from every Glyphs window,
+            # including Text Preview. Do not infer canvas focus merely from the
+            # document being active: only act when the first responder really
+            # belongs to the current Edit View's graphicView.
+            if not self._editCanvasHasFocus(font):
+                return event
             if self._textInputHasFocus():
                 return event
 
@@ -803,6 +809,75 @@ class CornerHotkeys(GeneralPlugin):
         return True
 
     @objc.python_method
+    def _editCanvasHasFocus(self, font):
+        """Return True only when the current Edit View canvas owns focus.
+
+        NSEvent local monitors receive events from all windows in Glyphs. In
+        particular, the separate Text Preview window uses a custom responder
+        rather than an NSTextView/NSTextField, so the generic text-input check
+        is not sufficient. Requiring the first responder to be the current
+        tab's graphicView (or one of its subviews) prevents Corner Hotkeys from
+        intercepting typing anywhere outside the editable canvas.
+        """
+        if font is None:
+            return False
+        try:
+            tab = font.currentTab
+        except Exception:
+            tab = None
+        if tab is None:
+            return False
+
+        try:
+            graphicView = tab.graphicView()
+        except Exception:
+            try:
+                graphicView = tab.graphicView
+                if callable(graphicView):
+                    graphicView = graphicView()
+            except Exception:
+                graphicView = None
+        if graphicView is None:
+            return False
+
+        try:
+            keyWindow = NSApplication.sharedApplication().keyWindow()
+            if keyWindow is None:
+                return False
+            try:
+                graphicWindow = graphicView.window()
+            except Exception:
+                graphicWindow = getattr(graphicView, "window", None)
+                if callable(graphicWindow):
+                    graphicWindow = graphicWindow()
+            if graphicWindow is None or keyWindow != graphicWindow:
+                return False
+
+            responder = keyWindow.firstResponder()
+            if responder is None:
+                return False
+            if responder == graphicView:
+                return True
+
+            # Be tolerant of Glyphs/AppKit placing keyboard focus on a child
+            # view of the canvas rather than on GSGlyphEditView itself.
+            view = responder
+            for _ in range(16):
+                try:
+                    view = view.superview()
+                except Exception:
+                    return False
+                if view is None:
+                    return False
+                if view == graphicView:
+                    return True
+        except Exception:
+            # This is deliberately fail-closed. Missing focus information must
+            # never turn a global key press into a corner-component shortcut.
+            return False
+        return False
+
+    @objc.python_method
     def _textInputHasFocus(self):
         """Return True while a text-editing control owns keyboard focus.
 
@@ -875,6 +950,11 @@ class CornerHotkeys(GeneralPlugin):
 
         cornerName = self._resolvedCornerName(slot, font)
         if not cornerName:
+            # If this font has no corner components at all, there is nothing
+            # useful to configure. Leave the key event untouched rather than
+            # popping up Settings while the user is typing elsewhere.
+            if not self._availableCornerNames(font):
+                return False
             self._notify(
                 "No corner assigned",
                 "Open Glyph → Corner Hotkeys Settings… and choose the _corner.* glyph for key %d." % slot,

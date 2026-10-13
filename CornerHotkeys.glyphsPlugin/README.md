@@ -10,7 +10,7 @@ Corner assignments and the alignment shortcut can be changed in **Glyph → Corn
 
 For saved Glyphs files, number-key assignments are remembered **per file path**. The plugin keeps profiles for the **99 most recently used files**, so switching between projects restores the corresponding corner assignments automatically. Moving or renaming a file gives it a new path and therefore a new assignment profile.
 
-The shortcuts can be enabled or disabled from the Glyph menu.
+The shortcuts can be enabled or disabled from the Glyph menu. They only fire while the **Edit View canvas has keyboard focus**, so typing in **Text Preview**, text fields, or palettes is left untouched.
 
 Coloured corner highlights are optional and **off by default**. Enable **Colored corner highlights** in Settings to use them.
 
