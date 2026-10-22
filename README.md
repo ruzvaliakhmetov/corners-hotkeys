@@ -1,8 +1,8 @@
-![corner hotkeys demo](images/header.gif)
+![corner hotkeys demo](images/coloured.png)
 
 # Corner Hotkeys
 
-A plugin for Glyphs 3 and Glyphs 4 for working with corner components using keyboard shortcuts.
+A plugin for Glyphs 3 for working with corner components using keyboard shortcuts.
 
 ## Shortcuts
 
@@ -20,18 +20,15 @@ Open:
 
 Assign a `_corner` glyph to each key using the dropdown menus. The shortcuts can also be temporarily enabled or disabled from the Glyph menu.
 
-The plugin does not intercept keys while typing in text fields or palettes.
-
 ## Installation
 
-Choose the plugin for your Glyphs version:
-
-- **Glyphs 3:** `CornerHotkeys.glyphsPlugin`
-- **Glyphs 4:** `CornerHotkeysG4.glyphsPlugin`
-
-Drag the plugin onto the corresponding Glyphs app icon in the Dock, then restart Glyphs.
+Drag `CornerHotkeys.glyphsPlugin` onto the Glyphs 3 app icon in the Dock, then restart Glyphs.
 
 ## Requirements
 
-- Glyphs 3 or Glyphs 4
+- Glyphs 3
 - Python module installed through the Glyphs Plugin Manager
+
+## Glyphs 4
+
+An older version for Glyphs 4 is also available: [`CornerHotkeysG4.glyphsPlugin`](CornerHotkeysG4.glyphsPlugin). It is no longer maintained.
